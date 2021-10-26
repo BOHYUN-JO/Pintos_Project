@@ -96,6 +96,11 @@ thread_init (void)
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
   init_thread (initial_thread, "main", PRI_DEFAULT);
+  #ifdef USERPROG
+  list_init(&(initial_thread->child));
+  initial_thread->exitFlag = 0;
+  #endif
+
   initial_thread->status = THREAD_RUNNING;
   initial_thread->tid = allocate_tid ();
 }
@@ -181,6 +186,11 @@ thread_create (const char *name, int priority,
 
   /* Initialize thread. */
   init_thread (t, name, priority);
+  #ifdef USERPROG
+  list_init(&(t->child));
+  list_push_back(&(thread_current()->child), &(t->current));
+  t->exitFlag = 0;
+  #endif
   tid = t->tid = allocate_tid ();
 
   /* Stack frame for kernel_thread(). */

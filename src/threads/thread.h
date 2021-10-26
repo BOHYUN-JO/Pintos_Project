@@ -96,6 +96,10 @@ struct thread
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
+    int exitFlag; 
+    int exitStatus;
+    struct list child;  // child thread
+    struct list_elem current; // current
 #endif
 
     /* Owned by thread.c. */

@@ -14,7 +14,7 @@
 #include "threads/flags.h"
 #include "threads/init.h"
 #include "threads/interrupt.h"
-#include "threads/palloc.h"
+#include "threads/palloc.h" 
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 
@@ -28,7 +28,8 @@ static bool load (const char *cmdline, void (**eip) (void), void **esp);
 tid_t
 process_execute (const char *file_name) 
 {
-  char *fn_copy;
+  char *fn_copy, *cmd, *copy, *next;
+  
   tid_t tid;
 
   /* Make a copy of FILE_NAME.
@@ -36,10 +37,22 @@ process_execute (const char *file_name)
   fn_copy = palloc_get_page (0);
   if (fn_copy == NULL)
     return TID_ERROR;
-  strlcpy (fn_copy, file_name, PGSIZE);
 
+  strlcpy (fn_copy, file_name, PGSIZE);
+  struct file* file = NULL;
+  cmd = (char*)malloc(sizeof(char)*PGSIZE);
+  copy = (char*)malloc(sizeof(char)*PGSIZE);
+  
+  // race 문제를 피하기 위해 file name copy
+  strlcpy(copy, file_name, PGSIZE);
+  cmd = strtok_r(copy, " ", &next);
+  file = filesys_open(cmd);
+  if(file == NULL){
+    return -1;
+  }
+  
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+  tid = thread_create (cmd, PRI_DEFAULT, start_process, fn_copy);
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy); 
   return tid;
@@ -88,7 +101,31 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
-  return -1;
+  int retStatus = -1;
+  bool flag = false;
+  struct thread* cur = thread_current();
+  struct list* child = &cur->child;
+  struct thread* childThread;
+  struct list_elem* ptr = list_begin(child);
+  
+  while( ptr!= list_end(child) ){
+    childThread = list_entry(ptr, struct thread, current);
+    tid_t curId = childThread->tid;
+    if(child_tid == curId){
+      flag = true;
+      break;
+    }
+    ptr = list_next(ptr);
+  }
+  if(flag){
+    while(childThread->exitFlag == 0){  // 자식이 종료될 때까지 
+      thread_yield();
+    }
+    retStatus = childThread->exitStatus;
+    list_remove(&(childThread->current));
+    childThread->exitFlag = 2;
+  }
+  return retStatus;
 }
 
 /* Free the current process's resources. */
@@ -114,6 +151,11 @@ process_exit (void)
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
+    cur->exitFlag = 1;
+    while(cur->exitFlag != 2){
+      thread_yield();
+    }
+
 }
 
 /* Sets up the CPU for running user code in the current
@@ -213,7 +255,12 @@ load (const char *file_name, void (**eip) (void), void **esp)
   struct file *file = NULL;
   off_t file_ofs;
   bool success = false;
-  int i;
+  int i, argc=0, len, temp ;  
+  char* arg[100];  // arguments 
+  uint32_t* address[100]; //arguments address
+  char* cmd = (char*)malloc(sizeof(char)*PGSIZE); // command
+  char* next; // next pointer
+  char* copy = (char*)malloc(sizeof(char)*PGSIZE);
 
   /* Allocate and activate page directory. */
   t->pagedir = pagedir_create ();
@@ -221,11 +268,22 @@ load (const char *file_name, void (**eip) (void), void **esp)
     goto done;
   process_activate ();
 
+  /* file name의 copy 사용 */
+  strlcpy(copy, file_name, PGSIZE);
+  cmd = strtok_r(copy, " ", &next);
+  arg[argc] = cmd;
+  argc++;
+  while(arg[argc-1]){
+    arg[argc] = strtok_r(NULL, " ", &next);
+    argc++;
+  }
+  argc--;
+
   /* Open executable file. */
-  file = filesys_open (file_name);
+  file = filesys_open (cmd);
   if (file == NULL) 
     {
-      printf ("load: %s: open failed\n", file_name);
+      printf ("load: %s: open failed\n", cmd);
       goto done; 
     }
 
@@ -305,14 +363,54 @@ load (const char *file_name, void (**eip) (void), void **esp)
   if (!setup_stack (esp))
     goto done;
 
+  /* stack 원소 삽입 */
+  for(i=argc-1; i>=0; i--){ // push argument
+    len = strlen(arg[i])+1;
+    *esp -= len;
+    strlcpy(*esp, arg[i], len);
+    address[i] = *esp;
+  }
+
+  while(1){ // word alignment
+    temp = *esp;
+    if(temp % 4 == 0){ // word alignment 만족
+      break;
+    }
+    *esp -= 1;
+    *(uint8_t*)*esp = 0;
+  }
+
+  for(i=argc; i>=0; i--){ // push address
+    *esp -= sizeof(uint32_t*);
+    if(i==argc){
+      *(uint32_t*)*esp = 0;
+    }else{
+      *(uint32_t*)*esp = address[i];
+    }
+  }
+
+  /* push stack address */
+  uint32_t* argv = *esp;
+  *esp -= 4;
+  *(uint32_t*)*esp = argv;
+
+  /* push argc */
+  *esp -= 4;
+  *(uint32_t*)*esp = argc;
+
+  /* push null */
+  *esp -= 4;
+  *(uint32_t*)*esp = 0;
+
   /* Start address. */
   *eip = (void (*) (void)) ehdr.e_entry;
 
-  success = true;
+  success = true; // 성공
 
  done:
   /* We arrive here whether the load is successful or not. */
   file_close (file);
+  //hex_dump(*esp, *esp, 100, 1); // for debugging
   return success;
 }
 
