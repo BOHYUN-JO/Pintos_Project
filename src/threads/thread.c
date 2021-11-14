@@ -87,6 +87,7 @@ static tid_t allocate_tid (void);
 void
 thread_init (void) 
 {
+  int i;
   ASSERT (intr_get_level () == INTR_OFF);
 
   lock_init (&tid_lock);
@@ -98,7 +99,12 @@ thread_init (void)
   init_thread (initial_thread, "main", PRI_DEFAULT);
   #ifdef USERPROG
   list_init(&(initial_thread->child));
-  initial_thread->exitFlag = 0;
+  initial_thread->exitFlag = 0; 
+  initial_thread->fd = 2;  // fd init
+  sema_init(&initial_thread->waitChild, 0);  // semaphore init
+  for(i=0; i<130; i++){ // file pointer init 
+    initial_thread->files[i] = NULL;
+  }
   #endif
 
   initial_thread->status = THREAD_RUNNING;
@@ -171,6 +177,7 @@ tid_t
 thread_create (const char *name, int priority,
                thread_func *function, void *aux) 
 {
+  int i;
   struct thread *t;
   struct kernel_thread_frame *kf;
   struct switch_entry_frame *ef;
@@ -190,6 +197,12 @@ thread_create (const char *name, int priority,
   list_init(&(t->child));
   list_push_back(&(thread_current()->child), &(t->current));
   t->exitFlag = 0;
+  t->fd = 2; // fd init
+  sema_init(&t->waitChild, 0); // semaphore init
+  t->parent = thread_current(); // parent init
+  for(i=0; i<130; i++){ // file pointer init
+    t->files[i] = NULL;
+  }
   #endif
   tid = t->tid = allocate_tid ();
 

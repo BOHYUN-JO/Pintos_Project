@@ -43,18 +43,35 @@ process_execute (const char *file_name)
   cmd = (char*)malloc(sizeof(char)*PGSIZE);
   copy = (char*)malloc(sizeof(char)*PGSIZE);
   
-  // race 문제를 피하기 위해 file name copy
+  // copy file_name to avoid race problem
   strlcpy(copy, file_name, PGSIZE);
   cmd = strtok_r(copy, " ", &next);
   file = filesys_open(cmd);
   if(file == NULL){
+    free(copy);
     return -1;
   }
   
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create (cmd, PRI_DEFAULT, start_process, fn_copy);
+  free(copy);
+  struct thread* cur = thread_current();
+  sema_down(&(cur->waitChild));
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy); 
+  struct list* childList = &cur->child;
+  struct thread* child;
+  struct list_elem* ptr;
+  int flag = 0;
+  ptr = list_prev(list_end(childList));
+  child = list_entry(ptr, struct thread, current);
+  if(child->tid == tid && child->exitStatus == -1){
+    flag = 1;
+  }
+  if(flag ==1){
+    tid = process_wait(tid);
+  }
+
   return tid;
 }
 
@@ -76,8 +93,11 @@ start_process (void *file_name_)
 
   /* If load failed, quit. */
   palloc_free_page (file_name);
+  struct thread* cur = thread_current();
+  sema_up(&(cur->parent->waitChild));
+
   if (!success) 
-    thread_exit ();
+    exit(-1);
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -101,29 +121,29 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
-  int retStatus = -1;
+  int retStatus = -1;   // return status
   bool flag = false;
   struct thread* cur = thread_current();
   struct list* child = &cur->child;
   struct thread* childThread;
   struct list_elem* ptr = list_begin(child);
   
-  while( ptr!= list_end(child) ){
+  while( ptr!= list_end(child) ){  
     childThread = list_entry(ptr, struct thread, current);
     tid_t curId = childThread->tid;
-    if(child_tid == curId){
+    if(child_tid == curId){ // find child
       flag = true;
       break;
     }
     ptr = list_next(ptr);
   }
   if(flag){
-    while(childThread->exitFlag == 0){  // 자식이 종료될 때까지 
+    while(childThread->exitFlag == 0){  // wait until child terminated
       thread_yield();
     }
-    retStatus = childThread->exitStatus;
-    list_remove(&(childThread->current));
-    childThread->exitFlag = 2;
+    retStatus = childThread->exitStatus;  // store exit status
+    list_remove(&(childThread->current)); // remove child
+    childThread->exitFlag = 2;  // child is removed
   }
   return retStatus;
 }
@@ -137,6 +157,11 @@ process_exit (void)
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
+
+  cur->exitFlag = 1;  // child is terminated 
+  while(cur->exitFlag != 2){  // synchronize
+    thread_yield();
+  }
   pd = cur->pagedir;
   if (pd != NULL) 
     {
@@ -151,10 +176,7 @@ process_exit (void)
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
-    cur->exitFlag = 1;
-    while(cur->exitFlag != 2){
-      thread_yield();
-    }
+    
 
 }
 
@@ -269,8 +291,8 @@ load (const char *file_name, void (**eip) (void), void **esp)
   process_activate ();
 
   /* file name의 copy 사용 */
-  strlcpy(copy, file_name, PGSIZE);
-  cmd = strtok_r(copy, " ", &next);
+  //strlcpy(copy, file_name, PGSIZE);
+  cmd = strtok_r(file_name, " ", &next);
   arg[argc] = cmd;
   argc++;
   while(arg[argc-1]){
