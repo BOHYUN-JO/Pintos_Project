@@ -6,6 +6,11 @@
 #include <stdint.h>
 #include "threads/synch.h"
 
+#ifndef USERPROG
+/*project #3. */
+extern bool thread_prior_aging;
+#endif
+
 /* States in a thread's life cycle. */
 enum thread_status
   {
@@ -24,6 +29,12 @@ typedef int tid_t;
 #define PRI_MIN 0                       /* Lowest priority. */
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
+
+/* Sleeping thread List */
+struct list sleepList;
+bool priority_greater(const struct list_elem *a, const struct list_elem *b, void* aux);
+void thread_sleep(int64_t start, int64_t ticks);
+void thread_awake(int64_t ticks);
 
 /* A kernel thread or user process.
 
@@ -97,6 +108,7 @@ struct thread
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
+#endif  
     int exitFlag; // 0-not terminated, 1-terminated, 2-clean(parent wait)
     int exitStatus;  // exit status
     struct list child;  // child list
@@ -105,8 +117,9 @@ struct thread
     int fd; // file descriptor
     struct thread* parent; // point parent
     struct semaphore waitChild; // for synchronization
+    int64_t sleepStart; // sleep start time
+    int64_t sleepEnd; // sleep End time
 
-#endif
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
